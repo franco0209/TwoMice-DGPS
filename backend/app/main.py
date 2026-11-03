@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import vna
+from .routers import gps, vna
 
 app = FastAPI(title="TwoMice-DGPS", version="0.1.0")
 app.add_middleware(
@@ -11,6 +11,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(vna.router)
+app.include_router(gps.router)
 
 
 @app.get("/api/health")

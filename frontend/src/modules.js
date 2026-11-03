@@ -1,8 +1,8 @@
 export const MODULES = [
   { id: 'antena', label: 'Antena', subtitle: 'Caracterización con VNA: S11, VSWR, impedancia y bandas GNSS', ready: true },
   {
-    id: 'adquisicion', label: 'Adquisición', ready: false,
-    subtitle: 'Registro NMEA en vivo de los dos receptores',
+    id: 'adquisicion', label: 'Adquisición', ready: true,
+    subtitle: 'Registro NMEA en vivo de los dos receptores (simulación o puertos serie)',
     planned: ['Estado de los puertos serie y calidad de fix', 'Skyplot y SNR por satélite', 'Sincronización por UTC y guardado de sesiones'],
   },
   {

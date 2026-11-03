@@ -7,3 +7,4 @@ dist/
 .env
 *.db
 data/raw/
+data/sessions/

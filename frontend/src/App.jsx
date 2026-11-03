@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import { MODULES } from './modules.js'
+import { useAcquisition } from './hooks/useAcquisition.js'
+import AcquisitionView from './views/AcquisitionView.jsx'
 import AntennaView from './views/AntennaView.jsx'
 import Placeholder from './views/Placeholder.jsx'
 
 export default function App() {
   const [view, setView] = useState('antena')
   const [vna, setVna] = useState(null) // el análisis persiste al cambiar de módulo
+  const acq = useAcquisition() // la sesión en vivo persiste al cambiar de módulo
   const current = MODULES.find((m) => m.id === view)
 
   return (
@@ -23,6 +26,8 @@ export default function App() {
         <main>
           {view === 'antena' ? (
             <AntennaView res={vna} setRes={setVna} />
+          ) : view === 'adquisicion' ? (
+            <AcquisitionView acq={acq} />
           ) : (
             <Placeholder module={current} />
           )}

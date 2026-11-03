@@ -129,12 +129,12 @@ Frontend (React + Vite)  <--REST/WebSocket-->  Backend (FastAPI, Python)  -->  S
 | Módulo | Función | Estado |
 | --- | --- | --- |
 | **VNA** | Importa `.s1p`/CSV; calcula S11, VSWR, impedancia; detecta resonancias y ancho de banda; compara con bandas GNSS | Backend y vista Antena hechos (falta comparar unidad 1 vs. 2) |
-| **Adquisición GPS** | Lee dos puertos serie, parsea NMEA (GGA, RMC, GSA, GSV), sincroniza por UTC, guarda sesiones, transmite en vivo | Pendiente |
+| **Adquisición GPS** | Lee dos puertos serie **o** un simulador, parsea NMEA (GGA, RMC, GSA, GSV), guarda sesiones `.nmea` y transmite en vivo | Simulación y pipeline hechos y probados; modo real implementado pero **sin probar con hardware** |
 | **Análisis diferencial** | Convierte a ENU, aplica la corrección en dominio de posición (con filtro de mismo conjunto de satélites), calcula RMSE, CEP50/95, 2DRMS, estabilidad, línea base | Pendiente |
 | **Reportes** | Experimentos, exportación CSV/JSON, informe PDF | Pendiente |
 
 ### Vistas del frontend
-Dashboard modular con barra lateral. **Hecha:** Antena (indicadores, S11, VSWR, Smith, impedancia, tablas de bandas GNSS y resonancias). **Pendientes** (muestran su contenido previsto): Adquisición, Diferencial e Informe. Plan completo: Antena (S11, VSWR, Smith, tabla de resonancias, comparación unidad 1 vs. 2) · Adquisición (estado en vivo, skyplot, SNR) · Diferencial (dispersión con círculos CEP antes/después, series de error, histogramas, mapa) · Informe.
+Dashboard modular con barra lateral. **Hechas:** Antena (indicadores, S11, VSWR, Smith, impedancia, tablas de bandas GNSS y resonancias) y Adquisición (control sim/real, KPIs por receptor, skyplot, SNR, dispersión y % de épocas con el mismo conjunto de satélites). **Pendientes:** Diferencial e Informe. Plan completo: Antena (S11, VSWR, Smith, tabla de resonancias, comparación unidad 1 vs. 2) · Adquisición (estado en vivo, skyplot, SNR) · Diferencial (dispersión con círculos CEP antes/después, series de error, histogramas, mapa) · Informe.
 
 ### Estructura del repositorio
 ```
@@ -142,19 +142,36 @@ TwoMice-DGPS/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py
-│   │   ├── routers/        # vna.py (hecho); gps.py, analysis.py, reports.py (pendientes)
-│   │   └── services/       # touchstone.py, resonance.py (hechos); nmea_reader.py, dgps.py, stats.py
+│   │   ├── routers/        # vna.py, gps.py (hechos); analysis.py, reports.py (pendientes)
+│   │   └── services/       # touchstone, resonance, geo, constellation, gnss_sim, nmea, acquisition (hechos); dgps.py, stats.py (pendientes)
 │   ├── tests/
 │   └── requirements.txt
 ├── frontend/               # React + Vite + Plotly (vista Antena hecha)
 │   └── src/                # views/, components/, modules.js
-├── data/                   # ejemplo_sintetico.s1p (sintético, no es medición real); logs NMEA pendientes
+├── data/                   # ejemplo_sintetico.s1p (sintético); sessions/ = logs .nmea + meta.json (ignorado por git)
 └── README.md
 ```
 
 ### API actual
 - `GET /api/health`
 - `POST /api/vna/analyze` — recibe un `.s1p` y devuelve S11, VSWR, impedancia, resonancias y reporte por banda.
+- `GET /api/gps/ports` · `POST /api/gps/sessions` (`mode: sim|real`) · `GET /api/gps/sessions/current` · `POST /api/gps/sessions/current/stop` · `GET /api/gps/sessions` · `GET /api/gps/sessions/current/epochs`
+- `WS /api/gps/ws` — épocas nuevas y estado de la sesión en vivo.
+
+### Adquisición: cómo se garantiza que simulación y real sean compatibles
+La interfaz común son las **líneas NMEA**. El simulador no inventa coordenadas: genera pseudorangos y resuelve la posición de cada receptor, y solo entonces escribe NMEA.
+```
+ simulador ┐                                    ┌─> log <rx>.nmea (mismo formato)
+ puerto serie ├─> líneas NMEA ─> ReceiverChannel ─┼─> EpochAssembler ─> épocas ─> WebSocket
+ log .nmea ┘     (ingest)                        └─> meta.json (modo, parámetros, verdad de terreno si es sim)
+```
+- **Errores comunes** a ambos receptores (se cancelan en el diferencial): efemérides/reloj del satélite (Gauss-Markov), ionosfera y troposfera residuales.
+- **Errores independientes** (no se cancelan): multitrayecto dependiente de la elevación, ruido dependiente de C/N0, reloj del receptor, y la **selección de satélites** (umbral de C/N0 y máscara de elevación). Por eso el efecto de «distinto conjunto de satélites» aparece solo.
+- Geometría con tiempo de vuelo y corrección de Sagnac; posición por mínimos cuadrados ponderados; HDOP/PDOP/VDOP reales; coordenadas cuantizadas por el formato NMEA (4 decimales de minuto ≈ 0,19 m).
+- `constellation.parse_yuma` carga un almanaque real (navcen.uscg.gov) para reproducir el cielo de un día; por defecto se usa una constelación sintética de 30 satélites.
+- Un log `.nmea` real o simulado se puede reproducir con `AcquisitionSession.start_replay`.
+- **Límites:** los receptores reales filtran la posición (Kalman) y usan sus propios modelos de iono/tropo; aquí solo se modela el error residual. Los parámetros por defecto (σ del multitrayecto, iono, etc.) son plausibles pero **no están calibrados con el Mighty Mouse**: cuando haya logs reales, ajustar el simulador hasta que reproduzca sus estadísticas. El acoplamiento con el VNA queda como `ReceiverConfig.cn0_offset_db` (p. ej. pérdida por desadaptación −10·log10(1−|Γ|²)).
+- `gps-sdr-sim` / GNSS-SDR generan señal IQ (requieren SDR o un receptor que la procese) y no producen NMEA por sí solos; se descartaron para este modo.
 
 ### Ejecución
 ```
@@ -177,7 +194,8 @@ Abrir `http://localhost:5173` y cargar un `.s1p` (p. ej. `data/ejemplo_sintetico
 - [x] Frontend: dashboard modular, carga de `.s1p` y gráficas S11/VSWR/Smith con bandas GPS
 - [ ] Frontend: comparación de la unidad 1 vs. 2 en la vista Antena
 - [ ] Validar el parser con una medición real del VNA del laboratorio
-- [ ] Adquisición NMEA de dos receptores y registro de sesiones
+- [x] Adquisición: simulador a nivel de pseudorango, parser NMEA, sesiones y vista en vivo
+- [ ] Adquisición: probar el modo real con los dos Mighty Mouse y calibrar el simulador con esos logs
 - [ ] Diferencial en dominio de posición con filtro de satélites comunes
 - [ ] Métricas: RMSE, CEP50/95, 2DRMS, línea base, bootstrap por bloques
 - [ ] Informe PDF
