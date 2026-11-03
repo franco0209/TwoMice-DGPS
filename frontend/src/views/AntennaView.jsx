@@ -30,8 +30,7 @@ function smithGrid() {
   return out
 }
 
-export default function AntennaView() {
-  const [res, setRes] = useState(null)
+export default function AntennaView({ res, setRes }) {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState(false)
@@ -54,24 +53,67 @@ export default function AntennaView() {
     }
   }
 
+  const input = (
+    <input type="file" accept=".s1p" hidden onChange={(e) => { upload(e.target.files[0]); e.target.value = '' }} />
+  )
+
   return (
     <>
-      <label
-        className={`card drop ${over ? 'over' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setOver(true) }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files[0]) }}
-      >
-        <input type="file" accept=".s1p" hidden onChange={(e) => upload(e.target.files[0])} />
-        {busy
-          ? 'Analizando…'
-          : res
-            ? `${res.filename} — arrastre otro .s1p o haga clic para reemplazar`
-            : 'Arrastre un archivo .s1p aquí o haga clic para seleccionarlo'}
-        {err && <p className="error">{err}</p>}
-      </label>
+      {res ? (
+        <div className="card filebar">
+          <span>
+            <strong>{res.filename}</strong>{' '}
+            <span className="muted">· {res.freq_mhz.length} puntos · {res.freq_mhz[0].toFixed(0)}–{res.freq_mhz.at(-1).toFixed(0)} MHz</span>
+          </span>
+          <label className="btn">{busy ? 'Analizando…' : 'Cambiar archivo'}{input}</label>
+        </div>
+      ) : (
+        <label
+          className={`card drop ${over ? 'over' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); setOver(true) }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files[0]) }}
+        >
+          {input}
+          {busy ? 'Analizando…' : 'Arrastre un archivo .s1p aquí o haga clic para seleccionarlo'}
+        </label>
+      )}
+      {err && <p className="error">{err}</p>}
       {res && <Results r={res} />}
     </>
+  )
+}
+
+function Kpis({ r }) {
+  const bands = Object.entries(r.bands)
+  const okCount = bands.filter(([, b]) => b.s11_db <= -10).length
+  const best = r.resonances.reduce((a, x) => (!a || x.s11_db < a.s11_db ? x : a), null)
+  const l1 = r.bands['GPS L1']
+  const l2 = r.bands['GPS L2']
+  const tone = (b) => (b.s11_db <= -10 ? 'ok' : 'bad')
+  return (
+    <div className="kpis">
+      <div className="kpi">
+        <span>Bandas adaptadas (−10 dB)</span>
+        <strong>{okCount} / {bands.length}</strong>
+        <small>dentro del barrido</small>
+      </div>
+      <div className="kpi">
+        <span>Mejor resonancia</span>
+        <strong>{best ? `${best.freq_mhz.toFixed(1)} MHz` : '—'}</strong>
+        <small>{best ? `${best.s11_db.toFixed(1)} dB · VSWR ${best.vswr.toFixed(2)}` : 'sin resonancias'}</small>
+      </div>
+      <div className="kpi">
+        <span>GPS L1 (1575,42 MHz)</span>
+        <strong className={l1 ? tone(l1) : 'muted'}>{l1 ? `${l1.s11_db.toFixed(1)} dB` : 'fuera de barrido'}</strong>
+        <small>{l1 ? `VSWR ${l1.vswr.toFixed(2)}` : ' '}</small>
+      </div>
+      <div className="kpi">
+        <span>GPS L2 (1227,60 MHz)</span>
+        <strong className={l2 ? tone(l2) : 'muted'}>{l2 ? `${l2.s11_db.toFixed(1)} dB` : 'fuera de barrido'}</strong>
+        <small>{l2 ? `VSWR ${l2.vswr.toFixed(2)}` : ' '}</small>
+      </div>
+    </div>
   )
 }
 
@@ -83,6 +125,7 @@ function Results({ r }) {
   const ref = { color: '#9aa4b2', dash: 'dash', width: 1 }
   return (
     <>
+      <Kpis r={r} />
       <div className="grid2">
         <section className="card">
           <h2>S11 (dB)</h2>

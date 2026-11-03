@@ -128,13 +128,13 @@ Frontend (React + Vite)  <--REST/WebSocket-->  Backend (FastAPI, Python)  -->  S
 ### Módulos
 | Módulo | Función | Estado |
 | --- | --- | --- |
-| **VNA** | Importa `.s1p`/CSV; calcula S11, VSWR, impedancia; detecta resonancias y ancho de banda; compara con bandas GNSS | Backend hecho |
+| **VNA** | Importa `.s1p`/CSV; calcula S11, VSWR, impedancia; detecta resonancias y ancho de banda; compara con bandas GNSS | Backend y vista Antena hechos (falta comparar unidad 1 vs. 2) |
 | **Adquisición GPS** | Lee dos puertos serie, parsea NMEA (GGA, RMC, GSA, GSV), sincroniza por UTC, guarda sesiones, transmite en vivo | Pendiente |
 | **Análisis diferencial** | Convierte a ENU, aplica la corrección en dominio de posición (con filtro de mismo conjunto de satélites), calcula RMSE, CEP50/95, 2DRMS, estabilidad, línea base | Pendiente |
 | **Reportes** | Experimentos, exportación CSV/JSON, informe PDF | Pendiente |
 
 ### Vistas del frontend
-Antena (S11, VSWR, Smith, tabla de resonancias, comparación unidad 1 vs. 2) · Adquisición (estado en vivo, skyplot, SNR) · Diferencial (dispersión con círculos CEP antes/después, series de error, histogramas, mapa) · Informe.
+Dashboard modular con barra lateral. **Hecha:** Antena (indicadores, S11, VSWR, Smith, impedancia, tablas de bandas GNSS y resonancias). **Pendientes** (muestran su contenido previsto): Adquisición, Diferencial e Informe. Plan completo: Antena (S11, VSWR, Smith, tabla de resonancias, comparación unidad 1 vs. 2) · Adquisición (estado en vivo, skyplot, SNR) · Diferencial (dispersión con círculos CEP antes/después, series de error, histogramas, mapa) · Informe.
 
 ### Estructura del repositorio
 ```
@@ -146,8 +146,9 @@ TwoMice-DGPS/
 │   │   └── services/       # touchstone.py, resonance.py (hechos); nmea_reader.py, dgps.py, stats.py
 │   ├── tests/
 │   └── requirements.txt
-├── frontend/               # React + Vite (pendiente)
-├── data/                   # ejemplos .s1p y logs NMEA
+├── frontend/               # React + Vite + Plotly (vista Antena hecha)
+│   └── src/                # views/, components/, modules.js
+├── data/                   # ejemplo_sintetico.s1p (sintético, no es medición real); logs NMEA pendientes
 └── README.md
 ```
 
@@ -155,7 +156,7 @@ TwoMice-DGPS/
 - `GET /api/health`
 - `POST /api/vna/analyze` — recibe un `.s1p` y devuelve S11, VSWR, impedancia, resonancias y reporte por banda.
 
-### Ejecución del backend
+### Ejecución
 ```
 cd backend
 python -m venv .venv && .venv\Scripts\activate
@@ -163,10 +164,18 @@ pip install -r requirements.txt
 pytest
 uvicorn app.main:app --reload
 ```
+En otra terminal, el frontend (proxy de `/api` a `localhost:8000`):
+```
+cd frontend
+npm install
+npm run dev
+```
+Abrir `http://localhost:5173` y cargar un `.s1p` (p. ej. `data/ejemplo_sintetico.s1p`).
 
 ## 8. Hoja de ruta
 - [x] Backend VNA: parser Touchstone, S11/VSWR/Z, resonancias, bandas GNSS
-- [ ] Frontend: carga de `.s1p` y gráficas S11/VSWR con bandas GPS
+- [x] Frontend: dashboard modular, carga de `.s1p` y gráficas S11/VSWR/Smith con bandas GPS
+- [ ] Frontend: comparación de la unidad 1 vs. 2 en la vista Antena
 - [ ] Validar el parser con una medición real del VNA del laboratorio
 - [ ] Adquisición NMEA de dos receptores y registro de sesiones
 - [ ] Diferencial en dominio de posición con filtro de satélites comunes
