@@ -128,13 +128,13 @@ Frontend (React + Vite)  <--REST/WebSocket-->  Backend (FastAPI, Python)  -->  S
 ### Módulos
 | Módulo | Función | Estado |
 | --- | --- | --- |
-| **VNA** | Importa `.s1p`/CSV; calcula S11, VSWR, impedancia; detecta resonancias y ancho de banda; compara con bandas GNSS | Backend y vista Antena hechos (falta comparar unidad 1 vs. 2) |
+| **VNA** | Importa `.s1p`/CSV; calcula S11, VSWR, impedancia; detecta resonancias y ancho de banda; compara con bandas GNSS | Hecho: backend y vista Antena con comparación unidad 1 vs. 2 (pendiente validar con una medición real) |
 | **Adquisición GPS** | Lee dos puertos serie **o** un simulador, parsea NMEA (GGA, RMC, GSA, GSV), guarda sesiones `.nmea` y transmite en vivo | Simulación y pipeline hechos y probados; modo real implementado pero **sin probar con hardware** |
-| **Análisis diferencial** | Convierte a ENU, aplica la corrección en dominio de posición (con filtro de mismo conjunto de satélites), calcula RMSE, CEP50/95, 2DRMS, estabilidad, línea base | Pendiente |
-| **Reportes** | Experimentos, exportación CSV/JSON, informe PDF | Pendiente |
+| **Análisis diferencial** | Convierte a ENU, aplica la corrección en dominio de posición (con filtro de mismo conjunto de satélites), calcula RMSE, CEP50/95, 2DRMS, estabilidad, línea base | Hecho y probado con simulación (`dgps.py`, `stats.py`) |
+| **Reportes** | Experimentos, exportación CSV/JSON, informe PDF | Hecho (`report.py`, matplotlib) |
 
 ### Vistas del frontend
-Dashboard modular con barra lateral. **Hechas:** Antena (indicadores, S11, VSWR, Smith, impedancia, tablas de bandas GNSS y resonancias) y Adquisición (control sim/real, KPIs por receptor, skyplot, SNR, dispersión y % de épocas con el mismo conjunto de satélites). **Pendientes:** Diferencial e Informe. Plan completo: Antena (S11, VSWR, Smith, tabla de resonancias, comparación unidad 1 vs. 2) · Adquisición (estado en vivo, skyplot, SNR) · Diferencial (dispersión con círculos CEP antes/después, series de error, histogramas, mapa) · Informe.
+Dashboard modular con barra lateral. **Hechas:** Antena (indicadores, S11, VSWR, Smith, impedancia, tablas de bandas GNSS y resonancias) y Adquisición (control sim/real, KPIs por receptor, skyplot, SNR, dispersión y % de épocas con el mismo conjunto de satélites). Diferencial (dispersión con círculos CEP50/95 antes/después, series de error E/N/U, histograma, tabla de métricas con IC95 por bootstrap de bloques, línea base; fuente: sesión guardada o dos `.nmea` subidos) e Informe (PDF, CSV, JSON e historial de experimentos). La vista Antena compara las unidades 1 y 2 (S11, VSWR, ΔS11 y tabla). Falta solo un mapa en la vista Diferencial.
 
 ### Estructura del repositorio
 ```
@@ -142,11 +142,11 @@ TwoMice-DGPS/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py
-│   │   ├── routers/        # vna.py, gps.py (hechos); analysis.py, reports.py (pendientes)
-│   │   └── services/       # touchstone, resonance, geo, constellation, gnss_sim, nmea, acquisition (hechos); dgps.py, stats.py (pendientes)
+│   │   ├── routers/        # vna.py, gps.py, analysis.py, reports.py
+│   │   └── services/       # touchstone, resonance, geo, constellation, gnss_sim, nmea, acquisition, dgps, stats, report
 │   ├── tests/
 │   └── requirements.txt
-├── frontend/               # React + Vite + Plotly (vista Antena hecha)
+├── frontend/               # React + Vite + Plotly (Antena, Adquisición, Diferencial, Informe)
 │   └── src/                # views/, components/, modules.js
 ├── data/                   # ejemplo_sintetico.s1p (sintético); sessions/ = logs .nmea + meta.json (ignorado por git)
 └── README.md
@@ -157,6 +157,17 @@ TwoMice-DGPS/
 - `POST /api/vna/analyze` — recibe un `.s1p` y devuelve S11, VSWR, impedancia, resonancias y reporte por banda.
 - `GET /api/gps/ports` · `POST /api/gps/sessions` (`mode: sim|real`) · `GET /api/gps/sessions/current` · `POST /api/gps/sessions/current/stop` · `GET /api/gps/sessions` · `GET /api/gps/sessions/current/epochs`
 - `WS /api/gps/ws` — épocas nuevas y estado de la sesión en vivo.
+- `POST /api/analysis/run` (`session_id`, `ref_known`, `rover_truth`, `block`, `n_boot`) · `POST /api/analysis/upload` (dos `.nmea` + posición conocida) · `GET /api/analysis/experiments` · `GET /api/analysis/sessions/{id}/result` · `GET /api/analysis/sessions/{id}/export?fmt=csv|json`
+- `GET /api/reports/sessions/{id}.pdf` · `POST /api/reports/pdf` (resultado JSON + opcional análisis VNA)
+
+### Análisis diferencial: cómo se calcula
+1. Se alinean las épocas por UTC (0,1 s) y se conservan las que tienen fix en ambos receptores.
+2. Solo se usan las épocas donde ref y móvil emplearon **el mismo conjunto de satélites** (GSA); el resto se descarta y se informa.
+3. En ENU local de la referencia: `Δ = −(ref_medida − ref_conocida)`, `móvil_corregido = móvil_medido + Δ`. Las alturas NMEA (sobre el geoide) se pasan a elipsoidales con la separación del GGA.
+4. Métricas (RMSE, CEP50/95 empíricos, 2DRMS = 2·RMSE_h, sesgo, σ, precisión sin sesgo) para «1 receptor» y «diferencial» **sobre las mismas épocas**, más el % de mejora.
+5. IC95 por **bootstrap circular de bloques pareado** (bloque ≈ tiempo de decorrelación) porque el error está autocorrelacionado.
+6. Con la verdad del móvil se mide **exactitud**; sin ella solo **precisión** (el sesgo común no es observable) y el informe lo indica.
+7. Línea base: longitud ref→móvil con 1 receptor (móvil medido − ref conocida) frente a la diferencial.
 
 ### Adquisición: cómo se garantiza que simulación y real sean compatibles
 La interfaz común son las **líneas NMEA**. El simulador no inventa coordenadas: genera pseudorangos y resuelve la posición de cada receptor, y solo entonces escribe NMEA.
@@ -192,13 +203,13 @@ Abrir `http://localhost:5173` y cargar un `.s1p` (p. ej. `data/ejemplo_sintetico
 ## 8. Hoja de ruta
 - [x] Backend VNA: parser Touchstone, S11/VSWR/Z, resonancias, bandas GNSS
 - [x] Frontend: dashboard modular, carga de `.s1p` y gráficas S11/VSWR/Smith con bandas GPS
-- [ ] Frontend: comparación de la unidad 1 vs. 2 en la vista Antena
+- [x] Frontend: comparación de la unidad 1 vs. 2 en la vista Antena
 - [ ] Validar el parser con una medición real del VNA del laboratorio
 - [x] Adquisición: simulador a nivel de pseudorango, parser NMEA, sesiones y vista en vivo
 - [ ] Adquisición: probar el modo real con los dos Mighty Mouse y calibrar el simulador con esos logs
-- [ ] Diferencial en dominio de posición con filtro de satélites comunes
-- [ ] Métricas: RMSE, CEP50/95, 2DRMS, línea base, bootstrap por bloques
-- [ ] Informe PDF
+- [x] Diferencial en dominio de posición con filtro de satélites comunes
+- [x] Métricas: RMSE, CEP50/95, 2DRMS, línea base, bootstrap por bloques
+- [x] Informe PDF, exportación CSV/JSON e historial de experimentos
 - [ ] (Opcional) Diferencial con datos crudos vía RTKLIB; lectura en vivo del VNA por SCPI
 
 ## 9. Preguntas abiertas

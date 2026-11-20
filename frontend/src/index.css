@@ -92,3 +92,6 @@ tbody tr:last-child td { border-bottom: 0; }
   .sidebar ul { grid-auto-flow: column; overflow-x: auto; }
   main, .topbar { padding-left: 16px; padding-right: 16px; }
 }
+
+.warn { background: color-mix(in srgb, var(--bad) 10%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  border-radius: 8px; padding: 10px 14px; margin: 0; font-size: 13px; }

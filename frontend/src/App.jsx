@@ -4,11 +4,13 @@ import { MODULES } from './modules.js'
 import { useAcquisition } from './hooks/useAcquisition.js'
 import AcquisitionView from './views/AcquisitionView.jsx'
 import AntennaView from './views/AntennaView.jsx'
-import Placeholder from './views/Placeholder.jsx'
+import DifferentialView from './views/DifferentialView.jsx'
+import ReportView from './views/ReportView.jsx'
 
 export default function App() {
   const [view, setView] = useState('antena')
-  const [vna, setVna] = useState(null) // el análisis persiste al cambiar de módulo
+  const [units, setUnits] = useState({ 1: null, 2: null }) // análisis VNA por unidad; persisten al cambiar de módulo
+  const [dgps, setDgps] = useState(null) // último resultado del diferencial
   const acq = useAcquisition() // la sesión en vivo persiste al cambiar de módulo
   const current = MODULES.find((m) => m.id === view)
 
@@ -25,11 +27,13 @@ export default function App() {
         </header>
         <main>
           {view === 'antena' ? (
-            <AntennaView res={vna} setRes={setVna} />
+            <AntennaView units={units} setUnits={setUnits} />
           ) : view === 'adquisicion' ? (
             <AcquisitionView acq={acq} />
+          ) : view === 'diferencial' ? (
+            <DifferentialView result={dgps} setResult={setDgps} />
           ) : (
-            <Placeholder module={current} />
+            <ReportView result={dgps} units={units} />
           )}
         </main>
       </div>

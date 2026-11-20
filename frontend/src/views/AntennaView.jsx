@@ -30,10 +30,15 @@ function smithGrid() {
   return out
 }
 
-export default function AntennaView({ res, setRes }) {
+const UNITS = [[1, 'Unidad 1', '#2563eb'], [2, 'Unidad 2', '#f59e0b']]
+
+export default function AntennaView({ units, setUnits }) {
+  const [tab, setTab] = useState(1) // 1 | 2 | 'cmp'
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState(false)
+  const target = tab === 'cmp' ? (units[1] ? 2 : 1) : tab
+  const res = tab === 'cmp' ? null : units[tab]
 
   async function upload(file) {
     if (!file) return
@@ -45,7 +50,7 @@ export default function AntennaView({ res, setRes }) {
       const r = await fetch('/api/vna/analyze', { method: 'POST', body: fd })
       const j = await r.json()
       if (!r.ok) throw new Error(j.detail ?? `Error ${r.status}`)
-      setRes(j)
+      setUnits((u) => ({ ...u, [target]: j }))
     } catch (e) {
       setErr(e instanceof TypeError ? 'No se pudo contactar al backend (¿uvicorn en :8000?)' : e.message)
     } finally {
@@ -59,27 +64,131 @@ export default function AntennaView({ res, setRes }) {
 
   return (
     <>
-      {res ? (
-        <div className="card filebar">
-          <span>
-            <strong>{res.filename}</strong>{' '}
-            <span className="muted">· {res.freq_mhz.length} puntos · {res.freq_mhz[0].toFixed(0)}–{res.freq_mhz.at(-1).toFixed(0)} MHz</span>
-          </span>
-          <label className="btn">{busy ? 'Analizando…' : 'Cambiar archivo'}{input}</label>
-        </div>
+      <div className="seg" role="tablist">
+        {UNITS.map(([k, l]) => (
+          <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
+            {l}{units[k] ? ' ✓' : ''}
+          </button>
+        ))}
+        <button className={tab === 'cmp' ? 'on' : ''} onClick={() => setTab('cmp')}>Comparar 1 vs. 2</button>
+      </div>
+      {tab === 'cmp' ? (
+        units[1] && units[2] ? <Compare a={units[1]} b={units[2]} /> : (
+          <section className="card empty">
+            <p className="muted">
+              Cargue un .s1p en la Unidad 1 y otro en la Unidad 2 para compararlas
+              ({units[1] ? 'falta la unidad 2' : units[2] ? 'falta la unidad 1' : 'faltan ambas'}).
+            </p>
+          </section>
+        )
       ) : (
-        <label
-          className={`card drop ${over ? 'over' : ''}`}
-          onDragOver={(e) => { e.preventDefault(); setOver(true) }}
-          onDragLeave={() => setOver(false)}
-          onDrop={(e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files[0]) }}
-        >
-          {input}
-          {busy ? 'Analizando…' : 'Arrastre un archivo .s1p aquí o haga clic para seleccionarlo'}
-        </label>
+        <>
+          {res ? (
+            <div className="card filebar">
+              <span>
+                <strong>{res.filename}</strong>{' '}
+                <span className="muted">· {res.freq_mhz.length} puntos · {res.freq_mhz[0].toFixed(0)}–{res.freq_mhz.at(-1).toFixed(0)} MHz</span>
+              </span>
+              <label className="btn">{busy ? 'Analizando…' : 'Cambiar archivo'}{input}</label>
+            </div>
+          ) : (
+            <label
+              className={`card drop ${over ? 'over' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setOver(true) }}
+              onDragLeave={() => setOver(false)}
+              onDrop={(e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files[0]) }}
+            >
+              {input}
+              {busy ? 'Analizando…' : `Arrastre el .s1p de la unidad ${tab} aquí o haga clic para seleccionarlo`}
+            </label>
+          )}
+          {err && <p className="error">{err}</p>}
+          {res && <Results r={res} />}
+        </>
       )}
-      {err && <p className="error">{err}</p>}
-      {res && <Results r={res} />}
+    </>
+  )
+}
+
+function Compare({ a, b }) {
+  const rs = [a, b]
+  const bandNames = [...new Set([...Object.keys(a.bands), ...Object.keys(b.bands)])]
+  const xaxis = { title: { text: 'Frecuencia (MHz)' } }
+  const line = (k, key) => ({
+    x: rs[k - 1].freq_mhz, y: rs[k - 1][key], mode: 'lines', name: UNITS[k - 1][1],
+    line: { color: UNITS[k - 1][2], width: 1.6 },
+  })
+  const shapes = bandShapes({ ...a.bands, ...b.bands })
+  // diferencia de S11 en la rejilla de la unidad 1 (interpolación lineal de la 2)
+  const interp = (x, xs, ys) => {
+    if (x < xs[0] || x > xs.at(-1)) return null
+    let lo = 0
+    let hi = xs.length - 1
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (xs[m] <= x) lo = m; else hi = m }
+    const t = (x - xs[lo]) / (xs[hi] - xs[lo] || 1)
+    return ys[lo] + t * (ys[hi] - ys[lo])
+  }
+  const diff = a.freq_mhz.map((f) => {
+    const v = interp(f, b.freq_mhz, b.s11_db)
+    return v == null ? null : v - a.s11_db[a.freq_mhz.indexOf(f)]
+  })
+  const best = (r) => r.resonances.reduce((x, y) => (!x || y.s11_db < x.s11_db ? y : x), null)
+  const f = (v, d = 1) => (v == null ? '—' : v.toFixed(d))
+  return (
+    <>
+      <div className="grid2">
+        <section className="card">
+          <h2>S11 (dB)</h2>
+          <Plot data={[line(1, 's11_db'), line(2, 's11_db')]} layout={{ xaxis, yaxis: { title: { text: 'dB' } }, shapes }} />
+        </section>
+        <section className="card">
+          <h2>VSWR</h2>
+          <Plot
+            data={[line(1, 'vswr'), line(2, 'vswr')]}
+            layout={{ xaxis, yaxis: { title: { text: 'VSWR' }, range: [1, Math.min(10, Math.max(...a.vswr, ...b.vswr))] }, shapes }}
+          />
+        </section>
+        <section className="card">
+          <h2>Diferencia de S11 (unidad 2 − unidad 1, dB)</h2>
+          <Plot
+            data={[{ x: a.freq_mhz, y: diff, mode: 'lines', name: 'ΔS11', line: { color: '#9333ea' } }]}
+            layout={{ xaxis, yaxis: { title: { text: 'dB' } }, shapes }}
+          />
+        </section>
+      </div>
+      <section className="card">
+        <h2>Resumen comparativo</h2>
+        <table>
+          <thead><tr><th>Parámetro</th><th>Unidad 1</th><th>Unidad 2</th><th>Δ (2 − 1)</th></tr></thead>
+          <tbody>
+            {bandNames.map((n) => {
+              const x = a.bands[n]
+              const y = b.bands[n]
+              return (
+                <tr key={n}>
+                  <td>S11 en {n} (dB)</td>
+                  <td>{f(x?.s11_db)}</td><td>{f(y?.s11_db)}</td>
+                  <td>{x && y ? f(y.s11_db - x.s11_db) : '—'}</td>
+                </tr>
+              )
+            })}
+            {[['Mejor resonancia (MHz)', 'freq_mhz', 2], ['S11 en la resonancia (dB)', 's11_db', 1], ['Ancho de banda −10 dB (MHz)', 'bw_mhz', 1]].map(([l, k, d]) => {
+              const x = best(a)?.[k]
+              const y = best(b)?.[k]
+              return (
+                <tr key={k}>
+                  <td>{l}</td><td>{f(x, d)}</td><td>{f(y, d)}</td>
+                  <td>{x != null && y != null ? f(y - x, d) : '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        <p className="muted note">
+          Diferencias grandes entre unidades en L1 sugieren desadaptación distinta; en la simulación se pueden
+          trasladar al receptor con <code>cn0_offset_db</code> = −10·log10(1 − |Γ|²).
+        </p>
+      </section>
     </>
   )
 }

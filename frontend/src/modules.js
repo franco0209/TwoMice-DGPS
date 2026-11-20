@@ -6,12 +6,12 @@ export const MODULES = [
     planned: ['Estado de los puertos serie y calidad de fix', 'Skyplot y SNR por satélite', 'Sincronización por UTC y guardado de sesiones'],
   },
   {
-    id: 'diferencial', label: 'Diferencial', ready: false,
+    id: 'diferencial', label: 'Diferencial', ready: true,
     subtitle: 'Corrección en dominio de posición y métricas de error',
     planned: ['Dispersión ENU con círculos CEP antes/después', 'RMSE, CEP50/95, 2DRMS y línea base', 'Filtro de satélites comunes entre receptores'],
   },
   {
-    id: 'informe', label: 'Informe', ready: false,
+    id: 'informe', label: 'Informe', ready: true,
     subtitle: 'Experimentos y exportación de resultados',
     planned: ['Historial de experimentos', 'Exportación CSV/JSON', 'Informe PDF'],
   },
