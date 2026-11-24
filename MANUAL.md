@@ -74,17 +74,22 @@ Los análisis se conservan al cambiar de módulo y se pierden al recargar la pá
 
 Registra los dos receptores a la vez: **Referencia** (en posición conocida) y **Móvil**. Cada sesión guarda `ref.nmea`, `rover.nmea` y `meta.json` en `data/sessions/<id>/`.
 
+La adquisición es un **asistente guiado**: cada etapa indica qué hacer, valida el resultado y no deja avanzar hasta que pasa. Al terminar la sesión salta sola al cierre, con acceso al análisis diferencial.
+
 ### 3.1 Modo simulación (para probar sin hardware)
-1. Elija **Simulación**.
-2. Parámetros: duración (s), velocidad (× tiempo real; 0 = lo más rápido), línea base (m), offset de C/N0 del móvil (dB) y semilla.
-3. Pulse **Iniciar**. Para sesiones largas use velocidad alta (p. ej. 100) o 0.
+Pasos: **Origen → Backend → Escenario → Registrar → Cierre**.
+1. Elija **Simulación**; se valida la conexión con el backend.
+2. Escenario: duración (s), velocidad (× tiempo real; 0 = lo más rápido), línea base (m), offset de C/N0 del móvil (dB) y semilla.
+3. **Iniciar registro**. Para sesiones largas use velocidad alta (p. ej. 100) o 0.
 
 El simulador genera errores comunes (efemérides, iono, tropo) y errores independientes (multitrayecto, ruido, selección de satélites), y escribe NMEA igual que un receptor real. La constelación es sintética y los parámetros no están calibrados con el Mighty Mouse.
 
 ### 3.2 Modo real (dos puertos serie)
-1. Conecte ambos receptores. Anote qué puerto es la referencia y cuál el móvil.
-2. Elija **Real (puertos serie)**, seleccione cada puerto, los baudios (típico 9600) y la duración.
-3. Pulse **Iniciar**. Deben ser puertos distintos; si uno se desconecta, la sesión se detiene y se marca el error.
+Pasos: **Origen → Backend → Conectar → Validar NMEA → Esperar fix → Registrar → Cierre**.
+1. **Conectar**: alimente ambos receptores y conéctelos a la PC. «Buscar puertos» debe listar al menos dos; si no, indica qué revisar (cable, driver, alimentación).
+2. **Validar NMEA**: asigne puerto de referencia y móvil (distintos) y baudios. «Comprobar NMEA» abre cada puerto ~3 s y verifica el checksum; distingue puerto ocupado, sin datos y baudios incorrectos.
+3. **Esperar fix**: re-comprueba solo hasta que ambos tengan fix y ≥ 4 satélites (muestra calidad GGA, satélites rastreados y HDOP).
+4. **Registrar**: indicadores de que llegan épocas de ambos receptores. Si un puerto se cae, la sesión se detiene y se marca el error.
 
 Los receptores deben emitir al menos **GGA** y, para el diferencial, **GSA** (satélites usados); **RMC** (fecha/hora) y **GSV** (skyplot/SNR) son recomendables. Sin GSA no hay épocas con «mismo conjunto» y el diferencial no se puede calcular.
 

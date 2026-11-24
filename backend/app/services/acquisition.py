@@ -79,6 +79,80 @@ def serial_reader(port: str, baud: int, ingest, stop: threading.Event, on_error)
         on_error(f"{port}: {e}")
 
 
+def probe_port(port: str, baud: int, seconds: float = 3.0, *, opener=None) -> dict:
+    """Abre `port` unos segundos y valida que haya NMEA legible (con checksum).
+
+    Devuelve {ok, stage, message, ...}. `stage` indica hasta dónde llegó:
+    open (no abrió) -> data (no llegó nada) -> nmea (llegó, pero no es NMEA válido)
+    -> ok. Incluye sentencias vistas, última calidad de fix, satélites y HDOP.
+    """
+    import pynmea2
+
+    out = {"port": port, "baud": baud, "ok": False, "stage": "open", "message": "",
+           "sentences": [], "good": 0, "bad": 0, "quality": None, "nsats": None, "hdop": None,
+           "sats_tracked": 0}
+    try:
+        if opener is None:
+            import serial  # pyserial
+            opener = lambda: serial.Serial(port, baud, timeout=0.5)  # noqa: E731
+        ser = opener()
+    except Exception as e:
+        out["message"] = f"No se pudo abrir {port}: {e} (¿ocupado por otro programa?)"
+        return out
+    kinds: set[str] = set()
+    raw_bytes = 0
+    tracked: set[str] = set()
+    t_end = time.time() + seconds
+    try:
+        while time.time() < t_end:
+            raw = ser.readline()
+            if not raw:
+                continue
+            raw_bytes += len(raw)
+            line = raw.decode("ascii", errors="ignore").strip()
+            if not line.startswith("$"):
+                out["bad"] += 1
+                continue
+            try:
+                m = pynmea2.parse(line, check=True)
+            except Exception:
+                out["bad"] += 1
+                continue
+            out["good"] += 1
+            kinds.add(m.sentence_type)
+            if m.sentence_type == "GGA":
+                out["quality"] = int(m.gps_qual or 0)
+                out["nsats"] = int(m.num_sats or 0)
+                try:
+                    out["hdop"] = float(m.horizontal_dil)
+                except (TypeError, ValueError):
+                    out["hdop"] = None
+            elif m.sentence_type == "GSV":
+                for i in range(1, 5):
+                    if getattr(m, f"sv_prn_num_{i}", "") and getattr(m, f"snr_{i}", ""):
+                        tracked.add(f"{m.talker}{getattr(m, f'sv_prn_num_{i}')}")
+    finally:
+        try:
+            ser.close()
+        except Exception:
+            pass
+    out["sentences"] = sorted(kinds)
+    out["sats_tracked"] = len(tracked)
+    if raw_bytes == 0:
+        out.update(stage="data", message="El puerto abre pero no llega ningún dato. "
+                   "Revise baudios, alimentación del receptor y que TX del receptor vaya a RX del adaptador.")
+    elif out["good"] == 0:
+        out.update(stage="nmea", message="Llegan datos pero ninguna sentencia NMEA válida: "
+                   "casi seguro los baudios no coinciden (pruebe 4800, 9600, 38400, 115200).")
+    else:
+        missing = [k for k in ("GGA", "RMC") if k not in kinds]
+        out.update(ok=True, stage="ok",
+                   message="NMEA correcto" + (f", pero faltan {', '.join(missing)}" if missing else ""))
+        if missing:
+            out["ok"] = False
+    return out
+
+
 def file_reader(path: str | Path, ingest, stop: threading.Event, speed: float = 0.0):
     """Reproduce un log NMEA (real o simulado). speed=0 -> lo más rápido posible;
     speed>0 -> espera 1/speed s por época (aprox., usa los GGA)."""

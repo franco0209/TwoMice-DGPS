@@ -137,3 +137,23 @@ def test_errors_are_common_mode_and_differential_helps():
     corr = np.array([enu(rov[k], truth_rov) - enu(ref[k], truth_ref) for k in same])
     cep = lambda a: np.median(np.hypot(a[:, 0], a[:, 1]))
     assert cep(corr) < 0.75 * cep(raw)
+
+
+def test_probe_port_validaciones():
+    from app.services import acquisition as acq
+    from app.services import nmea
+    import datetime as dt
+
+    class Fake:
+        def __init__(self, lines): self.lines = list(lines)
+        def readline(self):
+            return self.lines.pop(0).encode() if self.lines else b""
+        def close(self): pass
+
+    t = dt.datetime(2026, 1, 1, 12, 0, 0, tzinfo=dt.timezone.utc)
+    good = [nmea.gga(t, -12.0, -77.0, 150, 1, 8, 1.1) + "\r\n", nmea.rmc(t, -12.0, -77.0, 0, 0, True) + "\r\n"]
+    r = acq.probe_port("X", 9600, 0.2, opener=lambda: Fake(good))
+    assert r["ok"] and r["quality"] == 1 and r["nsats"] == 8
+    assert acq.probe_port("X", 9600, 0.2, opener=lambda: Fake([]))["stage"] == "data"
+    assert acq.probe_port("X", 9600, 0.2, opener=lambda: Fake(["\x00\xff basura\r\n"]))["stage"] == "nmea"
+    assert acq.probe_port("COM_NO_EXISTE", 9600, 0.2)["stage"] == "open"

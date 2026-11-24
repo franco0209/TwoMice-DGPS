@@ -29,7 +29,7 @@ export default function App() {
           {view === 'antena' ? (
             <AntennaView units={units} setUnits={setUnits} />
           ) : view === 'adquisicion' ? (
-            <AcquisitionView acq={acq} />
+            <AcquisitionView acq={acq} onNavigate={setView} />
           ) : view === 'diferencial' ? (
             <DifferentialView result={dgps} setResult={setDgps} />
           ) : (

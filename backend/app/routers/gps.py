@@ -51,6 +51,20 @@ def ports():
     return [{"port": p.device, "description": p.description} for p in list_ports.comports()]
 
 
+class ProbeBody(BaseModel):
+    port: str
+    baud: int = 9600
+    seconds: float = Field(3.0, ge=1, le=15)
+
+
+@router.post("/probe")
+def probe(body: ProbeBody):
+    """Paso de validación del asistente: ¿hay NMEA válido en este puerto?"""
+    if _current is not None and _current.state == "running":
+        raise HTTPException(409, "Hay una sesión en curso; deténgala antes de sondear puertos")
+    return acq.probe_port(body.port, body.baud, body.seconds)
+
+
 @router.post("/sessions")
 def start(body: StartBody):
     global _current
