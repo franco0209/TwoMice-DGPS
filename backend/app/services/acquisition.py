@@ -188,6 +188,7 @@ class AcquisitionSession:
                          for rx in receivers}
         self.started_at: float | None = None
         self.sim: GnssSimulator | None = None
+        self.procs: dict = {}
 
     # -- eventos
     def _on_epoch(self, d: dict):
@@ -261,6 +262,41 @@ class AcquisitionSession:
 
         self._spawn(run)
 
+    def start_sdr(self, configs: dict, duration_s: float | None = None, *, popen=None, binary="gnss-sdr"):
+        """Un proceso GNSS-SDR por receptor (config: `gnsssdr.GnssSdrConfig`).
+
+        Su NMEA entra por `ReceiverChannel.ingest`, igual que un puerto serie. Con fuente
+        «archivo» la sesión termina sola cuando acaban los procesos.
+        """
+        from . import gnsssdr
+        self.meta["sdr"] = {rx: {k: v for k, v in vars(c).items() if k != "nmea_path"}
+                            for rx, c in configs.items()}
+        kw = {"popen": popen} if popen else {}
+        self.procs = {rx: gnsssdr.GnssSdrProcess(c, self.dir / f"gnsssdr-{rx}", self.channels[rx].ingest,
+                                                 self._fail, binary=binary, **kw)
+                      for rx, c in configs.items()}
+        self.state = "running"
+        self.started_at = time.time()
+        for p in self.procs.values():
+            p.start()
+        if duration_s:
+            threading.Timer(duration_s, self.stop).start()
+
+        def watch():
+            while not self._stop.is_set():
+                if all(not p.running for p in self.procs.values()):
+                    time.sleep(0.5)  # deja drenar el tail de NMEA
+                    break
+                time.sleep(0.2)
+            for p in self.procs.values():
+                p.stop()
+            self._finish()
+
+        self._spawn(watch)
+
+    def sdr_status(self) -> dict:
+        return {rx: p.status() for rx, p in getattr(self, "procs", {}).items()}
+
     def _watch_real(self):
         while not self._stop.is_set():
             time.sleep(0.2)
@@ -293,6 +329,7 @@ class AcquisitionSession:
             "id": self.id, "mode": self.mode, "state": self.state, "error": self.error,
             "elapsed_s": (time.time() - self.started_at) if self.started_at else 0,
             "seq": self.seq,
+            **({"sdr": self.sdr_status()} if self.procs else {}),
             "receivers": {rx: {"lines": ch.lines, "epochs": len(ch.epochs),
                                "bad_lines": ch.asm.bad_lines, "last": ch.last}
                           for rx, ch in self.channels.items()},

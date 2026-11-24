@@ -1,6 +1,8 @@
 import asyncio
 import datetime as dt
 import json
+import shutil
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -30,8 +32,23 @@ class PortParams(BaseModel):
     baud: int = 9600
 
 
+class SdrRx(BaseModel):
+    """Un receptor SDR: USRP (Ethernet/USB), RTL-SDR o archivo IQ."""
+    source: Literal["usrp", "rtlsdr", "file"]
+    device_args: str = ""            # UHD: 'addr=192.168.10.2' o 'serial=XXXX'
+    rtl_index: int = Field(0, ge=0, le=16)
+    subdevice: str = Field("", max_length=16, pattern=r"^[A-Za-z0-9:]*$")
+    antenna: str = Field("RX2", max_length=16, pattern=r"^[A-Za-z0-9/]+$")
+    fs: float = Field(2.0e6, ge=0.5e6, le=10e6)
+    gain: float = Field(40.0, ge=0, le=76)
+    file_path: str = ""
+    sample_type: Literal["ishort", "byte", "gr_complex"] = "ishort"
+
+
 class StartBody(BaseModel):
-    mode: Literal["sim", "real"]
+    mode: Literal["sim", "real", "sdr"]
+    sdr_ref: SdrRx | None = None
+    sdr_rover: SdrRx | None = None
     duration_s: float = Field(600, gt=0, le=86400)
     speed: float = Field(1.0, ge=0, le=100000, description="Solo sim. 0 = lo más rápido posible")
     sim: SimParams = SimParams()
@@ -65,6 +82,28 @@ def probe(body: ProbeBody):
     return acq.probe_port(body.port, body.baud, body.seconds)
 
 
+def start_sdr_session(body: "StartBody") -> acq.AcquisitionSession:
+    from ..services import gnsssdr, sdr
+    if not (body.sdr_ref and body.sdr_rover):
+        raise HTTPException(422, "El modo sdr requiere sdr_ref y sdr_rover")
+    cfgs = {}
+    for rx, p in (("ref", body.sdr_ref), ("rover", body.sdr_rover)):
+        try:
+            sdr.device_args(p.device_args)
+        except ValueError as e:
+            raise HTTPException(422, f"{rx}: {e}")
+        if p.source == "file" and not Path(p.file_path).is_file():
+            raise HTTPException(422, f"{rx}: no existe el archivo IQ {p.file_path!r}")
+        cfgs[rx] = gnsssdr.GnssSdrConfig(
+            source=p.source, fs=p.fs, gain=p.gain, device_args=p.device_args, rtl_index=p.rtl_index,
+            antenna=p.antenna, subdevice=p.subdevice, file_path=p.file_path, sample_type=p.sample_type)
+    if not shutil.which("gnss-sdr"):
+        raise HTTPException(422, "gnss-sdr no está instalado (sudo apt install gnss-sdr)")
+    s = acq.AcquisitionSession("sdr", ["ref", "rover"])
+    s.start_sdr(cfgs, body.duration_s)
+    return s
+
+
 @router.post("/sessions")
 def start(body: StartBody):
     global _current
@@ -78,6 +117,8 @@ def start(body: StartBody):
             baseline_m=p.baseline_m, rover_cn0_offset_db=p.rover_cn0_offset_db,
             iono_zenith_m=p.iono_zenith_m, mp_sigma_m=p.mp_sigma_m, elev_mask=p.elev_mask)
         s.start_sim(cfg, body.duration_s, body.speed)
+    elif body.mode == "sdr":
+        s = start_sdr_session(body)
     else:
         if not (body.ref and body.rover):
             raise HTTPException(422, "El modo real requiere los puertos ref y rover")
@@ -88,6 +129,10 @@ def start(body: StartBody):
                       "rover": (body.rover.port, body.rover.baud)}, body.duration_s)
     _current = s
     return s.status()
+
+
+def current_session():
+    return _current
 
 
 @router.get("/sessions/current")

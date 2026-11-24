@@ -1,23 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, Charts, fmt, Kpis, RX } from './AcquisitionLive.jsx'
+import Check from '../components/Check.jsx'
+import { Orders, ordersDone, ordersFor, StepMount, StepPower, StepSite } from './Guide.jsx'
+import { SDR_STEP_BODIES, SDR_STEPS, sdrPassed, SDR_INITIAL } from './SdrSteps.jsx'
 
 const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 const probe = (port, baud, seconds = 3) => post('/api/gps/probe', { port, baud, seconds })
-
-/** Fila de validación: estado + mensaje + acción. */
-function Check({ state, title, detail, action }) {
-  const icon = { ok: '✓', fail: '✕', run: '…', idle: '○' }[state]
-  return (
-    <div className={`check ${state}`}>
-      <span className="check-icon">{icon}</span>
-      <div className="check-body">
-        <strong>{title}</strong>
-        {detail && <small>{detail}</small>}
-      </div>
-      {action}
-    </div>
-  )
-}
 
 function Stepper({ steps, current, maxReached, onGo }) {
   return (
@@ -36,11 +24,12 @@ function Stepper({ steps, current, maxReached, onGo }) {
 function StepMode({ w, set }) {
   return (
     <>
-      <p>Elija el origen de los datos. En <b>real</b> el asistente lo guía para conectar y validar cada receptor antes de registrar.</p>
+      <p>Elija el origen de los datos. En <b>SDR</b> y <b>NMEA</b> el asistente lo guía para conectar y validar cada receptor antes de registrar.</p>
       <div className="choices">
-        {[['real', 'Receptores reales', 'Dos receptores NMEA por puerto serie/USB (referencia + móvil).'],
+        {[['sdr', 'SDR (USRP / RTL-SDR)', 'IQ de GPS L1 procesado con GNSS-SDR: USRP por Ethernet/USB, RTL-SDR o archivo IQ. Solo recepción.'],
+          ['real', 'Receptores NMEA', 'Dos receptores con salida NMEA por puerto serie/USB (referencia + móvil).'],
           ['sim', 'Simulación', 'Pseudorangos sintéticos; no requiere hardware. Útil para practicar y validar el análisis.']].map(([k, t, d]) => (
-          <button key={k} className={`choice ${w.mode === k ? 'on' : ''}`} onClick={() => set({ mode: k })}>
+          <button key={k} className={`choice ${w.mode === k ? 'on' : ''}`} onClick={() => set({ mode: k, done: {}, simHw: {} })}>
             <strong>{t}</strong><small>{d}</small>
           </button>
         ))}
@@ -71,11 +60,7 @@ function StepPorts({ w, set }) {
   const n = w.ports.length
   return (
     <>
-      <ol className="todo">
-        <li>Alimente y conecte los <b>dos</b> receptores a la PC (USB o adaptador serie).</li>
-        <li>Ponga el <b>referencia</b> en la posición conocida y el <b>móvil</b> a la distancia de línea base prevista, con las antenas a cielo abierto.</li>
-        <li>Pulse «Buscar puertos»: debe aparecer un puerto por receptor.</li>
-      </ol>
+      <p>Pulse «Buscar puertos»: debe aparecer un puerto por receptor.</p>
       <Check state={busy ? 'run' : n >= 2 ? 'ok' : 'fail'} title={`Puertos detectados: ${n}`}
         detail={err || (n >= 2 ? w.ports.map((p) => `${p.port} (${p.description})`).join(' · ')
           : n === 1 ? 'Solo hay un puerto: falta un receptor (cable, driver USB-serie o alimentación).'
@@ -201,12 +186,13 @@ function StepSim({ w, set }) {
   )
 }
 
-function StepRun({ w, set, acq, online }) {
+function StepRun({ w, set, acq, online, ordersOk }) {
   const { hist, status } = acq
   const [err, setErr] = useState('')
   const running = status?.state === 'running'
   const real = w.mode === 'real'
-  const dur = real ? w.duration_s : w.sim.duration_s
+  const isSdr = w.mode === 'sdr'
+  const dur = isSdr ? w.sdrDuration : real ? w.duration_s : w.sim.duration_s
 
   async function start() {
     setErr('')
@@ -223,7 +209,7 @@ function StepRun({ w, set, acq, online }) {
 
   return (
     <>
-      {!running && real && (
+      {!running && real && !isSdr && (
         <div className="fields">
           <label>Duración (s) — recomendado ≥ 3600
             <input type="number" min="10" value={w.duration_s} onChange={(e) => set({ duration_s: Number(e.target.value) })} />
@@ -234,7 +220,8 @@ function StepRun({ w, set, acq, online }) {
       <div className="row">
         {running
           ? <button className="btn-primary stop" onClick={stop}>Detener</button>
-          : <button className="btn-primary" disabled={!online} onClick={start}>{w.started ? 'Nueva sesión' : 'Iniciar registro'}</button>}
+          : isSdr ? <span className="muted">{status?.mode === 'sdr' ? 'Sesión SDR finalizada.' : 'Inicie GNSS-SDR en el paso anterior.'}</span>
+          : <button className="btn-primary" disabled={!online || !ordersOk} onClick={start}>{w.started ? 'Nueva sesión' : 'Iniciar registro'}</button>}
         {status && <span className="muted">Sesión {running ? 'en curso' : 'finalizada'} · {Math.round(status.elapsed_s)} s / {dur} s</span>}
       </div>
       {running && (
@@ -272,13 +259,15 @@ function StepDone({ acq, onNavigate }) {
 }
 
 const INITIAL = {
+  ...SDR_INITIAL,
   mode: null, ports: [], ref: '', rover: '', baud: 9600, nmea: {}, fix: {}, duration_s: 3600, started: false,
   sim: { duration_s: 600, speed: 10, baseline_m: 3, rover_cn0_offset_db: 0, seed: 1 },
 }
 
 const STEPS = {
-  real: [['mode', 'Origen'], ['be', 'Backend'], ['ports', 'Conectar'], ['nmea', 'Validar NMEA'], ['fix', 'Esperar fix'], ['run', 'Registrar'], ['done', 'Cierre']],
-  sim: [['mode', 'Origen'], ['be', 'Backend'], ['sim', 'Escenario'], ['run', 'Registrar'], ['done', 'Cierre']],
+  sdr: SDR_STEPS,
+  real: [['mode', 'Origen'], ['be', 'Backend'], ['site', 'Lugar'], ['mount', 'Montaje'], ['ports', 'Conectar'], ['nmea', 'Validar NMEA'], ['fix', 'Esperar fix'], ['run', 'Registrar'], ['done', 'Cierre']],
+  sim: [['mode', 'Origen'], ['be', 'Backend'], ['site', 'Lugar'], ['mount', 'Montaje'], ['power', 'Encender'], ['sim', 'Escenario'], ['run', 'Registrar'], ['done', 'Cierre']],
 }
 
 export default function AcquisitionView({ acq, onNavigate }) {
@@ -288,7 +277,7 @@ export default function AcquisitionView({ acq, onNavigate }) {
   const [w, setW] = useState(() => ({ ...INITIAL, mode: status?.mode ?? null, started: Boolean(status) }))
   const set = useCallback((patch) => setW((p) => ({ ...p, ...patch })), [])
 
-  const steps = STEPS[w.mode === 'real' ? 'real' : 'sim'].map(([id, label]) => ({ id, label }))
+  const steps = STEPS[w.mode === 'real' ? 'real' : w.mode === 'sdr' ? 'sdr' : 'sim'].map(([id, label]) => ({ id, label }))
   const last = steps.length - 1
   // Si ya hay una sesión (al volver desde otro módulo) se retoma en Registrar/Cierre.
   const resume = status ? (running ? last - 1 : last) : 0
@@ -310,7 +299,13 @@ export default function AcquisitionView({ acq, onNavigate }) {
     nmea: Boolean(w.nmea.ref?.ok && w.nmea.rover?.ok && w.ref !== w.rover),
     fix: true,
     sim: w.sim.duration_s >= 10 && w.sim.baseline_m > 0,
+    site: w.sim.baseline_m > 0,
+    mount: true,
+    power: Boolean(w.simHw?.ref && w.simHw?.rover),
+    ...sdrPassed(step.id, w, acq) === undefined ? {} : { [step.id]: sdrPassed(step.id, w, acq) },
   }[step.id]
+  const ordersOk = ordersDone(w, step.id)
+  const canNext = Boolean(passed) && ordersOk
 
   const go = (i) => { setCur(i); setReached((r) => Math.max(r, i)) }
   const body = {
@@ -320,20 +315,28 @@ export default function AcquisitionView({ acq, onNavigate }) {
     nmea: <StepNmea w={w} set={set} />,
     fix: <StepFix w={w} set={set} />,
     sim: <StepSim w={w} set={set} />,
-    run: <StepRun w={w} set={set} acq={acq} online={online} />,
+    run: <StepRun w={w} set={set} acq={acq} online={online} ordersOk={ordersOk} />,
     done: <StepDone acq={acq} onNavigate={onNavigate} />,
+    site: <StepSite w={w} set={set} />,
+    mount: <StepMount w={w} />,
+    power: <StepPower w={w} set={set} />,
+    ...SDR_STEP_BODIES(w, set, acq),
   }[step.id]
 
   return (
     <>
       <section className="card wizard">
+        <div className="wiz-progress" aria-hidden="true"><i style={{ width: `${(Math.min(cur, last) / last) * 100}%` }} /></div>
         <Stepper steps={steps} current={cur} maxReached={reached} onGo={(i) => !running && go(i)} />
         <h2 className="step-title">{cur + 1}. {step.label}</h2>
-        {body}
+        <div key={step.id} className="step-body">
+          {ordersFor(step.id, w) && <Orders id={step.id} w={w} set={set} />}
+          {body}
+        </div>
         <div className="wiz-nav">
           <button className="btn-sec" disabled={cur === 0 || running} onClick={() => go(cur - 1)}>← Anterior</button>
           {step.id !== 'done' && step.id !== 'run' && (
-            <button className="btn-primary" disabled={!passed} onClick={() => go(cur + 1)}>Siguiente →</button>
+            <button className="btn-primary" disabled={!canNext} onClick={() => go(cur + 1)}>Siguiente →</button>
           )}
         </div>
       </section>

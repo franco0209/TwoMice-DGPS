@@ -194,3 +194,13 @@ data/sessions/<id>/
 ## 9. Referencia rápida de la API
 
 Documentación interactiva en **http://localhost:8000/docs** con el backend en marcha. Endpoints principales: `/api/vna/analyze`, `/api/gps/sessions`, `/api/analysis/run`, `/api/analysis/upload`, `/api/reports/sessions/{id}.pdf`. Detalle en el README.
+
+
+## Adquisición con SDR (USRP / RTL-SDR + GNSS-SDR)
+
+En **Adquisición → SDR** el asistente valida cada etapa antes de dejar avanzar:
+herramientas instaladas → conexión (ping para USRP Ethernet, `lsusb` para USB) → detección
+(`uhd_find_devices` / `rtl_test`) → sondeo (modelo, canales, rango de ganancia) → alimentación
+de la antena (confirmación manual) → captura de prueba (nivel, saturación, espectro) → GNSS-SDR
+(adquisición, tracking y primer fix) → registro. Solo se **recibe**; nunca se transmite.
+Instalación en Ubuntu: `sudo apt install uhd-host rtl-sdr gnss-sdr` y `uhd_images_downloader`.

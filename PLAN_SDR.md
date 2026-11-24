@@ -34,6 +34,25 @@ Decisiones tomadas por el usuario:
   con test. Se conserva como fuente opcional (receptor NMEA real).
 - `MANUAL.md` sección 3 actualizada al asistente.
 
+## 2b. Implementado en Linux (sesión 2)
+
+- `backend/app/services/sdr.py`: `tools_status`, `ping`, `usb_devices`, `find_devices`, `rtl_find`,
+  `probe_usrp`, `set_biast`, `capture_check` (+ `iq_metrics`/`judge_capture`). Sin shell, con timeout y
+  device args validados.
+- `backend/app/services/gnsssdr.py`: `build_conf` (UHD / Osmosdr / archivo; GPS L1 C/A; NMEA a archivo),
+  `GnssSdrProcess` (lanza, sigue stdout y hace tail del NMEA hacia `ReceiverChannel.ingest`),
+  `GnssSdrState` (satélites adquiridos/rastreados/navegación/fix).
+- `AcquisitionSession.start_sdr` y `mode: "sdr"` en `POST /api/gps/sessions`; `routers/sdr.py`
+  con `/api/sdr/{tools,ping,usb,find,probe,biast,capture-check,gnsssdr/*}`.
+- Asistente: `frontend/src/views/SdrSteps.jsx` (Herramientas → Conectar → Detectar → Sondear → Antena →
+  Captura → GNSS-SDR → Registrar → Cierre).
+- Tests: `backend/tests/test_sdr.py` (31 en total pasan) con *fakes* de subprocess y un gnss-sdr falso.
+
+**Verificado:** parsers y flujo con salidas simuladas; en esta PC hay UHD 4.9 pero ningún USRP, ni
+`rtl_test`, `gnss-sdr`. **Sin verificar con hardware:** formato real de `uhd_usrp_probe`/`rtl_test`,
+nombres exactos de claves del `.conf` de GNSS-SDR para tu versión, y las líneas de log que parsea
+`GnssSdrState`. Ajustar los regex con salidas reales (paso 2 de la sección 7).
+
 ## 3. Lo que NO se sabe aún (verificar en Linux)
 
 El repo Lain5G (`guallycanazas/Lain5G`) se revisó solo a nivel de README/docs: no
